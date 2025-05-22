@@ -1,165 +1,163 @@
-# Healthcare RCM Data Engineering Pipeline
+h1. Healthcare RCM Data Engineering Pipeline
 
-A comprehensive, end-to-end Azure-based data engineering solution for Healthcare Revenue Cycle Management (RCM). This project ingests, processes, and transforms clinical and claims data into analytical fact and dimension tables using a Medallion architecture (Bronze → Silver → Gold) on Azure.
+{toc\:printable=true|maxLevel=4}
 
----
+h2. Project Overview
+This project automates the end-to-end data flow for Healthcare Revenue Cycle Management (RCM) on Azure, from ingestion of EMR and claims data through a Medallion architecture (Bronze → Silver → Gold) to produce analytical fact and dimension tables.
 
-## Table of Contents
+h2. Domain: Revenue Cycle Management (RCM)
+RCM manages the financial lifecycle of patient services:
 
-1. [Project Overview](#project-overview)
-2. [Domain: Revenue Cycle Management (RCM)](#domain-revenue-cycle-management-rcm)
-3. [Technology Stack](#technology-stack)
-4. [Data Sources](#data-sources)
-5. [Architecture](#architecture)
+* Capture patient & insurance details (e.g., \$20k bill → \$15k insurance + \$5k patient)
+* Generate invoices and submit claims
+* Insurance adjudication (full, partial, or denied)
+* Patient balance follow-up and collections
+* KPI tracking (Days in AR, % AR > 90 days)
 
-   * [Medallion Layers](#medallion-layers)
-6. [Datasets & Configurations](#datasets--configurations)
-7. [Pipeline Components](#pipeline-components)
+h2. Technology Stack
+||Layer||Service/Tool||Purpose||
+\| Orchestration | Azure Data Factory | Ingest & orchestrate pipelines |
+\| Processing    | Azure Databricks   | Transform (Spark + Delta Lake) |
+\| Storage       | ADLS Gen2          | Bronze/Silver/Gold layers       |
+\| Source DB     | Azure SQL DB       | EMR & audit logs                |
+\| Credentials   | Azure Key Vault    | Secure secrets management       |
+\| Governance    | Unity Catalog (opt)| Table/catalog control           |
 
-   * [Linked Services & Datasets](#linked-services--datasets)
-   * [Activities & Control Flow](#activities--control-flow)
-   * [Audit & Incremental Loads](#audit--incremental-loads)
-8. [Deployment & Scheduling](#deployment--scheduling)
-9. [Best Practices & Enhancements](#best-practices--enhancements)
-10. [Contributing](#contributing)
-11. [License](#license)
+h2. Data Sources
+||Source||Type||Frequency||
+\| EMR                | Azure SQL table | Incremental/continuous |
+\| Claims             | CSV flat files  | Monthly               |
+\| ICD & NPI          | REST APIs       | On-demand             |
+\| CPT codes          | CSV flat files  | Monthly               |
 
----
+h2. Architecture
+h3. Medallion Layers
 
-## Project Overview
+* *Bronze:* raw Parquet files landing in ADLS Gen2
+* *Silver:* cleaned, conformed Delta tables (Common Data Model + SCD2)
+* *Gold:* aggregated fact and dimension tables (filtered by is\_current=true, is\_quarantined=false)
 
-This project implements a scalable data pipeline for Healthcare RCM, automating ingestion of EMR, claims, NPI/ICD/CPT data into Azure Data Lake, transforming it through a multi-layer Medallion architecture, and producing gold‑level fact and dimension tables for reporting and analytics.
+h2. Configuration & Mapping
 
-## Domain: Revenue Cycle Management (RCM)
-
-RCM covers all financial processes from patient registration through final payment:
-
-* **Patient Visit:** capture patient and insurance details.
-
-  * Example: \$20,000 total charges → \$15,000 insurance, \$5,000 patient.
-* **Services & Billing:** generate invoices.
-* **Claims Review:** insurance accepts/rejects/partially pays.
-* **Payments & Follow‑up:** collect patient balances.
-* **Tracking & Improvement:** monitor KPIs like Days in AR, % AR > 90 days.
-
-Key AR metrics:
-
-* 93% collectable by 30 days; 85% by 60 days; 73% by 90 days.
-* AR > 90 days ratio (e.g., \$200k/\$1M = 20%).
-* Days in AR (e.g., \$400k AR over 40 days → \$10k/day).
-
-## Technology Stack
-
-* **Azure Data Factory (ADF):** orchestration and ingestion
-* **Azure Databricks:** data processing & transformation
-* **Azure Data Lake Storage Gen2:** raw (bronze), curated (silver), and serving (gold)
-* **Azure SQL Database:** source EMR and audit logs
-* **Azure Key Vault:** secure credential management
-* **Unity Catalog:** governance (optional)
-
-## Data Sources
-
-| Source             | Type             | Ingestion Rate           |
-| ------------------ | ---------------- | ------------------------ |
-| EMR (Azure SQL DB) | Structured table | Continuous / Incremental |
-| Claims (CSV)       | Flat files       | Monthly                  |
-| NPI (Public API)   | REST API         | On-demand                |
-| ICD Codes (Public) | REST API         | On-demand                |
-| CPT Codes (CSV)    | Flat files       | Monthly                  |
-
-## Architecture
-
-### Medallion Layers
-
-1. **Bronze (Raw Parquet)**
-
-   * Landing zone for all sources in Parquet format.
-2. **Silver (Delta + CDM + SCD2)**
-
-   * Cleaned, enriched data in a Common Data Model.
-   * Slowly Changing Dimensions Type 2 for patient, encounter, transactions.
-3. **Gold (Aggregations)**
-
-   * Business-friendly fact and dimension tables, filtered (`is_current=true`, `is_quarantined=false`).
-
-## Datasets & Configurations
-
-* **Landing**: raw file ingestions (CSV → Parquet)
-* \*\*Config/
-
-  * `load_config.csv`: defines database, schema, table, load type (Full/Incremental), watermark, target path.
-
-  ```csv
-  database,datasource,tablename,loadtype,watermark,is_active,targetpath
+* *load\_config.csv* defines pipeline metadata:
+  {code\:csv}
+  database,datasource,tablename,loadtype,watermark,is\_active,targetpath
   trendytech-hospital-a,hos-a,dbo.encounters,Incremental,ModifiedDate,0,hosa
-  ...
-  ```
-* **Audit Table** (Delta on SQL DB): logs loads
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS audit.load_logs (
-    id BIGINT IDENTITY,
-    data_source STRING,
-    tablename STRING,
-    numberofrowscopied INT,
-    watermarkcolumnname STRING,
-    loaddate TIMESTAMP
+  ...  (10 entries total)
+  {code}
+* *Lookup\_file\_table\_mapping.json*: maps landing file names to target tables
+* *audit\_table\_ddl/*: SQL DDL for creating `audit.load_logs`
+  {code\:sql}
+  CREATE TABLE IF NOT EXISTS audit.load\_logs (
+  id BIGINT IDENTITY,
+  data\_source STRING,
+  tablename STRING,
+  numberofrowscopied INT,
+  watermarkcolumnname STRING,
+  loaddate TIMESTAMP
   );
-  ```
+  {code}
 
-## Pipeline Components
+h2. Pipeline Components
+h3. 1. Set up
 
-### Linked Services & Datasets
+* `audit_ddl.py` — create audit table schema in Azure SQL
+* `adls_mount.py` — mount ADLS Gen2 in Databricks workspace
 
-| Linked Service       | Dataset Type        | Purpose                        |
-| -------------------- | ------------------- | ------------------------------ |
-| Azure SQL DB         | Table               | EMR source                     |
-| ADLS Gen2            | Delimited & Parquet | Bronze landing & curated files |
-| Delta Lake           | Databricks Delta    | Silver + Gold tables           |
-| Key Vault            | Secrets             | Credential retrieval           |
-| Databricks Workspace | Notebook/pipeline   | Transformation logic           |
+h3. 2. API Extracts
 
-### Activities & Control Flow
+* `ICD Code API extract.ipynb` — pull ICD codes via public API
+* `NPI API extract.ipynb` — pull NPI data via public API
 
-1. **Lookup**: read `load_config.csv` settings
-2. **ForEach**: iterate over config entries in parallel or sequential
-3. **Conditional Move**: if target Parquet exists in Bronze, archive by date
-4. **Copy**: Full vs. Incremental load from SQL → Bronze
-5. **Log**: write row counts and timestamps to `audit.load_logs`
-6. **Transform**: Databricks notebooks for Silver (cleaning, SCD2, CDM)
-7. **Aggregate**: build Gold fact/dimension tables
+h3. 3. Silver Transformations
 
-### Audit & Incremental Loads
+* Python scripts: `Claims.py`, `CPT codes.py`, `Departments_F.py`, `Encounters.py`, `Patient.py`, `Providers_F.py`, `Transactions.py`
+* Notebooks: `ICD Code.ipynb`, `NPI.ipynb`, `data_generator_faker_module.ipynb`
 
-* **Full Load**: `SELECT * FROM table` → Bronze
-* **Incremental Load**: query watermark column > last audit date
+h3. 4. EMR Sample Data
 
-  ```sql
-  SELECT * FROM table
-   WHERE ModifiedDate >= '<last_fetched_date>'
-  ```
-* **Archive Logic**: move Bronze file to `bronze/<path>/archive/YYYY/MM/DD/`
-* **Logging**: store counts via ADF activity expressions
+* Folders: `trendytech-hospital-a/`, `trendytech-hospital-b/` each with CSVs for `departments`, `encounters`, `patients`, `providers`, `transactions`
 
-## Deployment & Scheduling
+h3. 5. Gold Transformations
 
-* **ADF Trigger**: Tumbling-window or schedule (e.g., daily at midnight)
-* **Databricks Jobs**: triggered by ADF for silver/gold transformations
-* **Monitoring**: ADF pipeline runs, Databricks job metrics, SQL audit logs
+* Dimension scripts: `dim_cpt_code.py`, `dim_department.py`, `dim_patient.py`, `dim_provider.py`
+* Notebooks: `dim_icd_code.ipynb`, `dim_npi.ipynb`
+* Fact table: `fact_transaction.sql`
 
-## Best Practices & Enhancements
+h3. 6. Datasets
 
-* **Parallelization**: convert sequential ForEach to parallel for scale
-* **Security**: integrate Unity Catalog and enforce RBAC
-* **Retry Logic**: configure activity retries in ADF
-* **Config‑driven**: use metadata files for dynamic pipelines
-* **Naming Conventions**: consistent container/folder/table names
-* **Governance**: implement data quarantining (`is_quarantined` flag)
+* `datasets/claims/`: `hospital1_claim_data.csv`, `hospital2_claim_data.csv`
+* `datasets/cptcodes/`: `cptcodes.csv`
 
-## Contributing
+h3. 7. Lookup & Audit
 
-1. Fork this repository
-2. Create a feature branch: `git checkout -b feature/your-change`
-3. Commit and push changes
-4. Open a Pull Request for review
+* `Lookup_file_table_mapping.json` for landing-to-target mapping
+* `audit_table_ddl/` contains SQL scripts for audit table setup
+
+h2. File Structure
+{code\:text}
+Trendytech-Azure-Project-main/
+├── 1. Set up/
+│   ├── audit\_ddl.py
+│   └── adls\_mount.py
+├── 2. API extracts/
+│   ├── ICD Code API extract.ipynb
+│   └── NPI API extract.ipynb
+├── 3. Silver/
+│   ├── CPT codes.py
+│   ├── Claims.py
+│   ├── Departments\_F.py
+│   ├── Encounters.py
+│   ├── ICD Code.ipynb
+│   ├── NPI.ipynb
+│   ├── Patient.py
+│   ├── Providers\_F.py
+│   ├── Transactions.py
+│   ├── data\_generator\_faker\_module.ipynb
+│   └── load\_config.csv
+├── EMR/
+│   ├── trendytech-hospital-a/
+│   └── trendytech-hospital-b/
+├── 4. Gold/
+│   ├── dim\_cpt\_code.py
+│   ├── dim\_department.py
+│   ├── dim\_icd\_code.ipynb
+│   ├── dim\_npi.ipynb
+│   ├── dim\_patient.py
+│   ├── dim\_provider.py
+│   └── fact\_transaction.sql
+├── datasets/
+│   ├── claims/
+│   └── cptcodes/
+├── Lookup\_file\_table\_mapping.json
+├── audit\_table\_ddl/
+├── Gold Queries/
+└── confluence\_documentation.md
+{code}
+
+h2. Deployment & Scheduling
+
+* ADF triggers (tumbling-window or scheduled runs)
+* Databricks jobs invoked by ADF for Silver & Gold transformations
+* Monitoring via ADF run logs, Databricks job metrics, SQL audit logs
+
+h2. Best Practices & Enhancements
+
+* Parallelize ForEach loops for scale
+* Enforce metadata-driven config (`load_config.csv`)
+* Implement retries and error notifications in ADF
+* Secure data via Unity Catalog & role-based access
+* Adopt consistent naming conventions
+* Introduce data quarantining (`is_quarantined` flag) in Silver
+
+h2. Contributing
+
+# Fork repository
+
+# Create feature branch (`feature/your-change`)
+
+# Commit & push
+
+# Open a Pull Request
+
 
