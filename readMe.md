@@ -85,7 +85,7 @@ RCM tracks patient services from registration to final payment, covering:
    * `load_config.csv` for dynamic ingestion
 4. **EMR Sample Data** (`EMR/`)
 
-   * `trendytech-hospital-a/` and `trendytech-hospital-b/` each with `.csv` files for departments, encounters, patients, providers, transactions
+   * `hospital-a/` and `hospital-b/` each with `.csv` files for departments, encounters, patients, providers, transactions
 5. **Gold Loads** (`4. Gold/`)
 
    * Dimension scripts: `dim_cpt_code.py`, `dim_department.py`, `dim_patient.py`, `dim_provider.py`
@@ -95,7 +95,7 @@ RCM tracks patient services from registration to final payment, covering:
 ## Project Structure
 
 ```text
-Trendytech-Azure-Project-main/
+Project-main/
 ├── 1. Set up/
 │   ├── audit_ddl.py
 │   └── adls_mount.py
@@ -115,14 +115,14 @@ Trendytech-Azure-Project-main/
 │   ├── data_generator_faker_module.ipynb
 │   └── load_config.csv
 ├── EMR/
-│   ├── trendytech-hospital-a/
+│   ├──hospital-a/
 │   │   ├── Readme
 │   │   ├── departments.csv
 │   │   ├── encounters.csv
 │   │   ├── patients.csv
 │   │   ├── providers.csv
 │   │   └── transactions.csv
-│   └── trendytech-hospital-b/
+│   └── hospital-b/
 │       ├── Readme
 │       ├── departments.csv
 │       ├── encounters.csv
